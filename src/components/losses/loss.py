@@ -1,9 +1,9 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
 from scipy import ndimage
 import itertools
+from time import perf_counter
+import numpy as np
 
 """
 Paper: In Pixel Aggregation, we borrow the idea of clustering
@@ -32,36 +32,46 @@ class AggregationLoss(nn.Module):
         self.sigma_agg = sigma_agg
         
     def forward(self, pred_similarities, regions_mask, kernels_mask):
-        kernel_labels, num_kernel = ndimage.label(kernels_mask)
-        region_labels, num_region = ndimage.label(regions_mask)
+                
+        # pred_similarities: (B, S_C, SIZE, SIZE)
+        # regions_mask: (B, 1, SIZE, SIZE)
+        # kernels_mask: (B, 1, SIZE, SIZE)
         
-        kernels_mask_cardinality = torch.zeros_like(kernels_mask) # |Ki|
-        regions_mask_cardinality = torch.zeros_like(regions_mask)
+        batch_size = kernels_mask.shape[0]
         
-        for i in range(1, num_kernel + 1):
-            where_ones = (kernel_labels == i)
-            kernels_mask_cardinality[where_ones] = kernels_mask[where_ones].sum()
+        kernel_labels, _ = ndimage.label(kernels_mask)
+        region_labels, _ = ndimage.label(regions_mask)
         
-        for i in range(1, num_region + 1):
-            where_ones = (region_labels == i)
-            regions_mask_cardinality[where_ones] = regions_mask[where_ones].sum()
+        kernel_labels = torch.from_numpy(kernel_labels)
+        region_labels = torch.from_numpy(region_labels)
         
-        # Gk_kernel_similarities = pred_similarities * kernels_mask / kernels_mask_cardinality
+        kernels_mask_cardinality = torch.zeros_like(kernels_mask) # |Ki|        
+        regions_mask_cardinality = torch.zeros_like(regions_mask) # |Ti|
         Gk_kernel_similarities = torch.zeros_like(pred_similarities)
-        C = pred_similarities.shape[0] # Num channels of similarity vector
+        C = pred_similarities.shape[1] # Num channels of similarity vector
         
-        for i in range(1, num_kernel + 1): # Looping through each kernel
-            where_ones = torch.from_numpy(kernel_labels == i)
-            for j in range(C):
-                Gk_kernel_similarities[j][where_ones] = pred_similarities[j][where_ones].sum()
-            
+        num_kernels_array = []
+        
+        for batch in range(batch_size):
+            num_kernel = kernel_labels[batch].max()
+            num_kernels_array.append(num_kernel)
+            for i in range(1, num_kernel + 1):
+                where_ones = (kernel_labels[batch] == i).squeeze(axis=0)
+                kernels_mask_cardinality[batch] = kernels_mask_cardinality[batch].masked_fill(where_ones, kernels_mask[batch].masked_select(where_ones).sum())
+                for j in range(C):
+                    Gk_kernel_similarities[batch][j][where_ones] = pred_similarities[batch][j][where_ones].sum()
+        
         Gk_kernel_similarities /= (kernels_mask_cardinality + 1) # Gk / |K| (plus one for handling 0 division)
         
         Fp_similarities = pred_similarities * regions_mask
         
-        D_p_K = torch.max(input=torch.linalg.norm(Fp_similarities - Gk_kernel_similarities) - self.sigma_agg, other=0.0)
+        norm = torch.linalg.norm(Fp_similarities - Gk_kernel_similarities, dim=1) # Compute norm for each pixel.
+        
+        norm = norm - self.sigma_agg
+                
+        D_p_K = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
         D_p_K = torch.log(D_p_K**2 + 1) / (regions_mask_cardinality + 1) # (plus one for handling 0 division)
-        L_agg = D_p_K.sum() / num_region
+        L_agg = (D_p_K / num_kernel).mean(dim=(1,2,3)).sum()
         return L_agg
  
         
@@ -75,7 +85,7 @@ class DiscriminationLoss(nn.Module):
         super().__init__()
         self.sigma_dis = sigma_dis
         
-    def forward(self, pred_similarities, regions_mask, kernels_mask):
+    def forward(self, pred_similarities, kernels_mask):
         # The number of discrimination happen is: N(N-1)/2 where N = number of kernel
         kernel_labels, num_kernel = ndimage.label(kernels_mask)
         
