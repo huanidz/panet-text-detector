@@ -4,7 +4,7 @@ from scipy import ndimage
 import itertools
 from time import perf_counter
 import numpy as np
-
+from tqdm import tqdm
 """
 Paper: In Pixel Aggregation, we borrow the idea of clustering
 to reconstruct the complete text instances from the kernels.
@@ -70,8 +70,8 @@ class AggregationLoss(nn.Module):
         norm = norm - self.sigma_agg
                 
         D_p_K = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
-        D_p_K = torch.log(D_p_K**2 + 1) / (regions_mask_cardinality + 1) # (plus one for handling 0 division)
-        L_agg = (D_p_K / num_kernel).mean(dim=(1,2,3)).sum()
+        D_p_K = torch.log(D_p_K**2 + 1) / (regions_mask_cardinality.squeeze(dim=1) + 1) # (plus one for handling 0 division)
+        L_agg = (D_p_K / num_kernel).sum(dim=(1,2)).sum()
         return L_agg
  
         
@@ -87,34 +87,41 @@ class DiscriminationLoss(nn.Module):
         
     def forward(self, pred_similarities, kernels_mask):
         # The number of discrimination happen is: N(N-1)/2 where N = number of kernel
-        kernel_labels, num_kernel = ndimage.label(kernels_mask)
         
-        if num_kernel == 1:
-            return 0.0
-        elif num_kernel < 1:
-            raise ValueError("Number of kernels in an image should not be 0.!")
+        kernel_labels = torch.cat([torch.from_numpy(ndimage.label(kernels_mask[batch])[0]).unsqueeze(dim=0) for batch in range(kernels_mask.shape[0])], dim=0)
+        batch_size = pred_similarities.shape[0]
         
+        scale = torch.Tensor([kernel_labels[batch].max() for batch in range(kernel_labels.shape[0])])
+        scale = torch.where(scale > 1, 1 / (scale * (scale - 1)), scale)        
         
-        scale = 1.0/(num_kernel)*(num_kernel - 1)
-        
-        Gk_kernel_similarities = torch.zeros_like(pred_similarities)
-        C = pred_similarities.shape[0] # Num channels of similarity vector
+        C = pred_similarities.shape[1] # Num channels of similarity vector
         
         array_of_Gk_kernel_similarities = []
-        for i in range(1, num_kernel + 1): # Looping through each kernel
-            where_ones = torch.from_numpy(kernel_labels == i)
-            Gk_kernel_similarities = torch.zeros_like(pred_similarities)
-            for j in range(C):
-                Gk_kernel_similarities[j][where_ones] = pred_similarities[j][where_ones].sum()
-            array_of_Gk_kernel_similarities.append(Gk_kernel_similarities)
-        
+        for batch in range(batch_size):
+            num_kernel = kernel_labels[batch].max()
+            if num_kernel == 1:
+                continue
+            elif num_kernel < 1:
+                raise ValueError("Number of kernels in an image should not be 0.!")
+            array_of_Gk_kernel_similarities_for_current_batch = []
+            for i in range(1, num_kernel + 1): # Looping through each kernel
+                where_ones = (kernel_labels[batch] == i).squeeze(axis=0)
+                Gk_kernel_similarities = torch.zeros_like(pred_similarities)
+                for j in range(C):
+                    Gk_kernel_similarities[batch][j][where_ones] = pred_similarities[batch][j][where_ones].sum()    
+                array_of_Gk_kernel_similarities_for_current_batch.append(Gk_kernel_similarities)
+            array_of_Gk_kernel_similarities.append(array_of_Gk_kernel_similarities_for_current_batch)
         L_dis = 0.0
-        for pair in itertools.combinations(array_of_Gk_kernel_similarities, 2):
-            D_ki_kj = torch.max(input=(self.sigma_dis - torch.linalg.norm(pair[0], pair[1])), other=0.0)
-            D_ki_kj = torch.log(D_ki_kj**2 + 1)
-            L_dis += D_ki_kj
         
-        L_dis *= scale
+        for batch_kernel_sim in array_of_Gk_kernel_similarities:
+            for pair in (itertools.combinations(batch_kernel_sim, 2)):
+                norm = self.sigma_dis - torch.linalg.norm(pair[0] - pair[1], dim=1)
+                D_ki_kj = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
+                D_ki_kj = torch.log(D_ki_kj**2 + 1)
+                L_dis += D_ki_kj
+        
+        L_dis *= scale.view(-1, 1, 1)
+        L_dis = L_dis.sum(dim=(1,2)).sum(dim=0)
         return L_dis
     
         
