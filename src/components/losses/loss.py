@@ -131,11 +131,11 @@ class TextDiceLoss(nn.Module):
         super(TextDiceLoss, self).__init__()
         self.eps = epsilon
         
-    def forward(self, pred_regions, regions_gt):
+    def forward(self, pred_regions, regions_gt, ohem_masks):
         pred_regions = torch.sigmoid(pred_regions)
         
-        intersection = torch.sum(pred_regions * regions_gt) # pred_regions should be sigmoied.
-        union = torch.sum(pred_regions * regions_gt) + torch.sum(regions_gt) + self.eps
+        intersection = torch.sum(pred_regions * regions_gt * ohem_masks) # pred_regions should be sigmoied.
+        union = torch.sum(pred_regions * regions_gt * ohem_masks) + torch.sum(regions_gt * ohem_masks) + self.eps
         loss = 1 - (2 * intersection / union)
         return loss
     
@@ -151,3 +151,58 @@ class KernelDiceLoss(nn.Module):
         union = torch.sum(pred_kernels * kernels_gt) + torch.sum(kernels_gt) + self.eps
         loss = 1 - (2 * intersection / union)
         return loss
+    
+class PANLoss(nn.Module):
+    def __init__(self, ohem_ratio:int = 3, alpha:float = 0.5, beta:float = 0.25):
+        super(PANLoss, self).__init__()
+        self.ohem_ratio = ohem_ratio
+        
+        self.loss_regions = TextDiceLoss()
+        self.loss_kernel = KernelDiceLoss()
+        self.loss_aggregation = AggregationLoss(sigma_agg=0.5)
+        self.loss_discrimination = DiscriminationLoss(sigma_dis=3)
+        
+        self.alpha = alpha
+        self.beta = beta
+        
+    def forward(self, pred_regions, regions_gt, pred_kernels, kernels_gt, pred_similarities):
+        
+        ohem_masks = self.ohem_batch(pred_regions, regions_gt, self.ohem_ratio)
+        
+        loss_regions = self.loss_regions(pred_regions, regions_gt, ohem_masks) # pred_regions, regions_gt, ohem_mask
+        loss_kernel = self.loss_kernel(pred_kernels, kernels_gt) # pred_kernels, kernels_gt
+        loss_aggregation = self.loss_aggregation(pred_similarities, regions_gt, kernels_gt) # pred_similarities, regions_mask, kernels_mask
+        loss_discrimination = self.loss_discrimination(pred_similarities, kernels_gt) # pred_similarities, kernels_mask
+        
+        loss = loss_regions + self.alpha * loss_kernel + self.beta * (loss_aggregation + loss_discrimination)
+        return loss
+        
+    
+    def ohem_single(self, pred_regions, regions_gt, ohem_ratio=3):
+        pos_num = int(torch.sum((regions_gt > 0.5).to(dtype=torch.float32)))
+        
+        if pos_num == 0:
+            return regions_gt
+        
+        neg_num = int(torch.sum((regions_gt <= 0.5).to(dtype=torch.float32)))
+        neg_num = int(min(pos_num * ohem_ratio, neg_num))
+        
+        if neg_num == 0:
+            return regions_gt
+        
+        neg_score = torch.masked_select(pred_regions, regions_gt <= 0.5)
+        neg_score_sorted = torch.sort(-neg_score).values
+        threshold = -neg_score_sorted[neg_num - 1]
+        
+        selected_mask = torch.logical_or((pred_regions >= threshold), (regions_gt > 0.5))
+        selected_mask = selected_mask.reshape_as(regions_gt).to(dtype=torch.float32)
+        return selected_mask
+    
+    def ohem_batch(self, pred_regions, regions_gt, ohem_ratio=3):
+        selected_masks = []
+        for i in range(pred_regions.shape[0]):
+            selected_masks.append(self.ohem_single(pred_regions[i], regions_gt[i], ohem_ratio))
+
+        selected_masks = torch.cat(selected_masks, 0).to(dtype=torch.float32)
+        return selected_masks
+        
