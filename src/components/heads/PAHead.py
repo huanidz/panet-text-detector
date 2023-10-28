@@ -13,20 +13,26 @@ class ConvBlock(nn.Module):
         
     def forward(self, x):
         x = self.conv(x)
-        x = self.bn(x)
-        if self.is_activation: 
-            x = self.relu(x)
+        # x = self.bn(x)
+        # if self.is_activation: 
+        #     x = self.relu(x)
         return x
     
 class PAHead(nn.Module):
     def __init__(self, channels_scale:int = 128, similarity_channels:int = 32) -> None:
         super(PAHead, self).__init__()
         self.feature_map_channels = 4 * channels_scale
-        self.conv_text_regions = ConvBlock(in_channels=self.feature_map_channels, out_channels=1, kersize=3, stride=1, padding=1)
-        self.conv_text_kernels = ConvBlock(in_channels=self.feature_map_channels, out_channels=1, kersize=3, stride=1, padding=1)    
-        self.conv_similarity = ConvBlock(in_channels=self.feature_map_channels, out_channels=similarity_channels, kersize=3, stride=1, padding=1)
+        self.conv_out = ConvBlock(in_channels=self.feature_map_channels, out_channels=self.feature_map_channels, kersize=3, stride=1, padding=1)
+        self.bn_out = nn.BatchNorm2d(num_features=self.feature_map_channels)
+        self.relu = nn.ReLU()
+        
+        self.conv_text_regions = ConvBlock(in_channels=self.feature_map_channels, out_channels=1, kersize=1, stride=1, padding=0)
+        self.conv_text_kernels = ConvBlock(in_channels=self.feature_map_channels, out_channels=1, kersize=1, stride=1, padding=0)    
+        self.conv_similarity = ConvBlock(in_channels=self.feature_map_channels, out_channels=similarity_channels, kersize=1, stride=1, padding=0)
         
     def forward(self, x):
+        # x = self.conv_out(x)
+        # x = self.relu(self.bn_out(x))
         text_regions = self.conv_text_regions(x)
         text_kernels = self.conv_text_kernels(x)
         similarity = self.conv_similarity(x)

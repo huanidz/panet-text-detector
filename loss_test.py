@@ -48,6 +48,7 @@ if __name__ == "__main__":
                          [0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0]]]]).int()
     
      masks_region = torch.cat(BS // 2 * [masks_region], dim=0)
+     print(f"==>> masks_region.shape: {masks_region.shape}")
 
      pred_regions = torch.randn_like(masks_region.float())
      
