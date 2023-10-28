@@ -1,9 +1,9 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+import numpy as np
+import sys
 
 from src.datasets.PANData import PANDataset
 from src.components.net.PANet import PANet
@@ -14,13 +14,13 @@ torch_version = torch.__version__
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 num_epochs = 50
-batch_size = 16
+batch_size = 8
 
 images_folder = "./data/train_images/"
 labels_folder = "./data/train_labels/"
 target_image_size = 320
-kernel_shrink_ratio = 0.7
-
+kernel_shrink_ratio = 0.5
+np.set_printoptions(threshold=sys.maxsize)
 dataset = PANDataset(images_folder=images_folder, labels_folder=labels_folder, target_image_size=target_image_size, kernel_shrink_ratio=kernel_shrink_ratio)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
@@ -58,7 +58,7 @@ for epoch in range(num_epochs):
         text_regions, text_kernels, similarities = model(image)
         all_loss = criteria(text_regions, text_mask, text_kernels, kernel_mask, similarities, text_mask_ndi_labels, kernel_mask_ndi_labels) # pred_regions, regions_gt, pred_kernels, kernels_gt, pred_similarities
         loss = all_loss['loss']
-        
+        # raise ValueError("ASD")
         loss.backward()
         optimizer.step()
 

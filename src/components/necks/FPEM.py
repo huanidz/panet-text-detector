@@ -30,7 +30,7 @@ class ConvBlock(nn.Module):
 class UpScaleAggregator(nn.Module):
     def __init__(self, channels_scale:int = 128):
         super(UpScaleAggregator, self).__init__()
-        self.linear_upsample = nn.Upsample(scale_factor=2, mode='linear')
+        self.linear_upsample = nn.Upsample(scale_factor=2, mode='bilinear')
         self.dw_conv = DWConv(in_channels=channels_scale, out_channels=channels_scale, stride=1)
         self.last_conv = ConvBlock(in_channels=channels_scale, out_channels=channels_scale, kersize=1, stride=1, padding=0)
         
@@ -44,7 +44,7 @@ class UpScaleAggregator(nn.Module):
 class DownScaleAggregator(nn.Module):
     def __init__(self, channels_scale:int = 128):
         super(DownScaleAggregator, self).__init__()
-        self.linear_upsample = nn.Upsample(scale_factor=2, mode='linear')
+        self.linear_upsample = nn.Upsample(scale_factor=2, mode='bilinear')
         
         self.dw_conv = DWConv(in_channels=channels_scale, out_channels=channels_scale, stride=2)
         self.last_conv = ConvBlock(in_channels=channels_scale, out_channels=channels_scale, kersize=1, stride=1, padding=0)

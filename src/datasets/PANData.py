@@ -18,7 +18,7 @@ class PANDataset(Dataset):
         self.target_image_size = target_image_size
         
         self.kernel_shrink_ratio = kernel_shrink_ratio
-        
+        self.kekw = 0
         
     def __getitem__(self, index):
         filename = self.all_images_files[index]
@@ -75,7 +75,13 @@ class PANDataset(Dataset):
             except:
                 # print(f"Found mis-label polygon in the file: {image_path}. Ignoring it!")
                 continue
-            
+        
+        cv2.imwrite(f"/home/huan/prjdir/panet-text-detection/data/debug_text_regions/text_mask_{self.kekw}.png", text_mask * 255)
+        
+        cv2.imwrite(f"/home/huan/prjdir/panet-text-detection/data/debug_kernel_regions/kernel_mask_{self.kekw}.png", kernel_mask * 255)
+        
+        self.kekw += 1
+        
         text_mask_ndi_labels, _ = ndimage.label(text_mask)
         kernel_mask_ndi_labels, _ = ndimage.label(kernel_mask)
         
