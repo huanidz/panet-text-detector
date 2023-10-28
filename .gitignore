@@ -1,8 +1,10 @@
 note.txt
 data/
+output/
 template.py
 test.py
 test2.py
+*.pth
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

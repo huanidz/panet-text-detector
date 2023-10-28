@@ -13,8 +13,8 @@ torch_version = torch.__version__
 
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
-num_epochs = 50
-batch_size = 8
+num_epochs = 60
+batch_size = 16
 
 images_folder = "./data/train_images/"
 labels_folder = "./data/train_labels/"
@@ -35,6 +35,10 @@ print("Enable autograd anomaly detection..")
 torch.autograd.set_detect_anomaly(True)
 print("Start training...")
 # model = torch.compile(model)
+
+# checkpoint = torch.load("./model_checkpoint_epoch_15.pth")
+# model.load_state_dict(checkpoint['model_state_dict'])
+# optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
 
 for epoch in range(num_epochs):
     print(f"EPOCH {epoch + 1}/{num_epochs}")
@@ -71,12 +75,20 @@ for epoch in range(num_epochs):
         running_loss_dis += all_loss['loss_discrimination']
         
         if (batch_idx + 1) % 20 == 0:
-            print(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch_idx + 1}/{len(dataloader)}], Loss: {running_loss / 20:.4f}, Loss_text:  {running_loss_text/20:.4f}, Loss_kernel: {running_loss_kernel/20:.4f}, Loss_agg: {running_loss_agg/20:.4f}, Loss_dis: {running_loss_dis/20:.4f}')
+            print(f'Epoch [{epoch + 1}/{num_epochs}], Batch [{batch_idx + 1}/{len(dataloader)}], Loss: {running_loss / 20:.6f}, Loss_text:  {running_loss_text/20:.6f}, Loss_kernel: {running_loss_kernel/20:.6f}, Loss_agg: {running_loss_agg/20:.6f}, Loss_dis: {running_loss_dis/20:.6f}')
             running_loss = 0.0
             running_loss_text = 0.0
             running_loss_kernel = 0.0
             running_loss_agg = 0.0
             running_loss_dis = 0.0
+            
+    # Saving the model after each epoch
+    torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': loss,
+            }, f"model_checkpoint_epoch_{epoch + 1}.pth")
         
         
         

@@ -9,7 +9,7 @@ from ..utils.common import calculating_scaling_offset, offset_polygon
 
 class PANDataset(Dataset):
     """Some Information about PANDataset"""
-    def __init__(self, images_folder, labels_folder, target_image_size, kernel_shrink_ratio):
+    def __init__(self, images_folder, labels_folder, target_image_size, kernel_shrink_ratio, mode='train'):
         super(PANDataset, self).__init__()
         self.all_images_files = os.listdir(images_folder)
         
@@ -20,12 +20,29 @@ class PANDataset(Dataset):
         self.kernel_shrink_ratio = kernel_shrink_ratio
         self.kekw = 0
         
-    def __getitem__(self, index):
-        filename = self.all_images_files[index]
-        image_path = os.path.join(self.images_folder, filename)
-        label_path = os.path.join(self.labels_folder, filename.replace(".jpg", ".xml"))
-        return self.make_text_mask_and_kernel_mask(image_path=image_path, label_path=label_path, target_size=self.target_image_size)
+        self.mode = mode
         
+        self.image_mean = [0.485, 0.456, 0.406]
+        self.image_std = [0.229, 0.224, 0.225]
+        
+        
+    def __getitem__(self, index):
+        if self.mode == 'train':
+            filename = self.all_images_files[index]
+            image_path = os.path.join(self.images_folder, filename)
+            label_path = os.path.join(self.labels_folder, filename.replace(".jpg", ".xml"))
+            return self.make_text_mask_and_kernel_mask(image_path=image_path, label_path=label_path, target_size=self.target_image_size)
+        elif self.mode == 'eval':
+            filename = self.all_images_files[index]
+            image_path = os.path.join(self.images_folder, filename)
+            image = cv2.imread(image_path)
+            original = cv2.imread(image_path)
+            image = cv2.resize(image, dsize=(self.target_image_size, self.target_image_size))
+            img_mean = [0.485, 0.456, 0.406]
+            img_std = [0.229, 0.224, 0.225]
+            image = image / 255.0
+            image = (image - img_mean) / img_std
+            return original, torch.from_numpy(image.transpose((2, 0, 1))).float()
 
     def __len__(self):
         return len(self.all_images_files)
@@ -36,12 +53,17 @@ class PANDataset(Dataset):
         return [(coords[i], coords[i + 1]) for i in range(0, len(coords), 2)]
     
     def make_text_mask_and_kernel_mask(self, image_path, label_path, target_size):
-        image = cv2.imread(image_path)
+        image = cv2.imread(image_path, flags=cv2.IMREAD_COLOR)
         H, W, _ = image.shape
         scale_h = (target_size // 4) / H
         scale_w = (target_size // 4) / W
         
         image = cv2.resize(image, dsize=(target_size, target_size))
+        img_mean = [0.485, 0.456, 0.406]
+        img_std = [0.229, 0.224, 0.225]
+        image = image / 255.0
+        image = (image - img_mean) / img_std
+        
         model_out_size = target_size // 4
         text_mask = np.zeros((model_out_size, model_out_size), dtype=np.int32)
         kernel_mask = np.zeros((model_out_size, model_out_size), dtype=np.int32)
@@ -76,11 +98,11 @@ class PANDataset(Dataset):
                 # print(f"Found mis-label polygon in the file: {image_path}. Ignoring it!")
                 continue
         
-        cv2.imwrite(f"/home/huan/prjdir/panet-text-detection/data/debug_text_regions/text_mask_{self.kekw}.png", text_mask * 255)
+        # cv2.imwrite(f"/home/huan/prjdir/panet-text-detection/data/debug_text_regions/text_mask_{self.kekw}.png", text_mask * 255)
         
-        cv2.imwrite(f"/home/huan/prjdir/panet-text-detection/data/debug_kernel_regions/kernel_mask_{self.kekw}.png", kernel_mask * 255)
+        # cv2.imwrite(f"/home/huan/prjdir/panet-text-detection/data/debug_kernel_regions/kernel_mask_{self.kekw}.png", kernel_mask * 255)
         
-        self.kekw += 1
+        # self.kekw += 1
         
         text_mask_ndi_labels, _ = ndimage.label(text_mask)
         kernel_mask_ndi_labels, _ = ndimage.label(kernel_mask)

@@ -62,12 +62,12 @@ class AggregationLoss(nn.Module):
                 where_ones = (region_labels[batch] == i).squeeze(axis=0)
                 regions_mask_cardinality[batch] = regions_mask_cardinality[batch].masked_fill(where_ones, kernels_mask[batch].masked_select(where_ones).sum())                
         
-        
         Gk_kernel_similarities /= (kernels_mask_cardinality + 1) # Gk / |K| (plus one for handling 0 division)
         
         Fp_similarities = pred_similarities * regions_mask
         
         norm = torch.linalg.norm(Fp_similarities - Gk_kernel_similarities, dim=1) # Compute norm for each pixel.
+        
         
         norm = norm - self.sigma_agg
                 
@@ -87,13 +87,17 @@ class DiscriminationLoss(nn.Module):
         super().__init__()
         self.sigma_dis = sigma_dis
         
-    def forward(self, pred_similarities, kernel_mask_ndi_labels):
+    def forward(self, pred_similarities, kernels_mask, kernel_mask_ndi_labels):
         
         kernel_labels = kernel_mask_ndi_labels
         
         batch_size = pred_similarities.shape[0]      
         
         C = pred_similarities.shape[1] # Num channels of similarity vector
+        
+        
+        Gk_kernel_similarities = torch.zeros_like(pred_similarities) # Calculate Gk of each kernel
+        kernels_mask_cardinality = torch.zeros_like(kernels_mask) # |Ki| 
         
         array_of_Gk_kernel_similarities = []
         for batch in range(batch_size):
@@ -107,21 +111,34 @@ class DiscriminationLoss(nn.Module):
             for i in range(1, num_kernel + 1): # Looping through each kernel
                 where_ones = (kernel_labels[batch] == i).squeeze(axis=0)
                 Gk_kernel_similarities = torch.zeros_like(pred_similarities)
+                kernels_mask_cardinality = torch.zeros_like(kernels_mask)
+                kernels_mask_cardinality[batch] = kernels_mask_cardinality[batch].masked_fill(where_ones, kernels_mask[batch].masked_select(where_ones).sum())
                 for j in range(C):
-                    Gk_kernel_similarities[batch][j][where_ones] = pred_similarities[batch][j][where_ones].sum()    
+                    Gk_kernel_similarities[batch][j][where_ones] = pred_similarities[batch][j][where_ones].sum()
+                Gk_kernel_similarities /= (kernels_mask_cardinality + 1)    
                 array_of_Gk_kernel_similarities_for_current_batch.append(Gk_kernel_similarities)
             array_of_Gk_kernel_similarities.append(array_of_Gk_kernel_similarities_for_current_batch)
         L_dis = 0.0
         
         for batch_kernel_sim in array_of_Gk_kernel_similarities:
             for pair in (itertools.combinations(batch_kernel_sim, 2)):
-                norm = self.sigma_dis - torch.linalg.norm(pair[0] - pair[1], dim=1)
-                D_ki_kj = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
-                D_ki_kj = torch.log(D_ki_kj**2 + 1)
+                dist = self.sigma_dis - (torch.dist(pair[0], pair[1]) + 1)
+                norm = torch.max(dist, torch.zeros_like(dist))
+                # norm = torch.linalg.norm(pair[0] - pair[1], dim=1)
+                # norm = torch.where(norm != 0.0, self.sigma_dis - norm, norm)
+                # D_ki_kj = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
+                D_ki_kj = torch.log(norm**2 + 1)
                 L_dis += D_ki_kj
         
+        
         # L_dis *= scale.view(-1, 1, 1)
-        L_dis = L_dis.sum(dim=(1,2)).sum(dim=0)
+        # print(f"==>> L_dis: {L_dis}")
+        # L_dis = L_dis.sum(dim=(1,2)).sum(dim=0)
+        
+        # try:
+        #     L_dis = L_dis.sum(dim=(1,2)).sum(dim=0)
+        # except:
+        #     print("L_dis:", L_dis)
         return L_dis
     
         
@@ -138,8 +155,8 @@ class TextDiceLoss(nn.Module):
         pred_regions = pred_regions.reshape([pred_regions.shape[0], -1]) 
         regions_gt = regions_gt.reshape([regions_gt.shape[0], -1])
         
-        pred_regions = pred_regions * regions_gt
-        regions_gt = regions_gt * regions_gt
+        pred_regions = pred_regions
+        regions_gt = regions_gt
         
         intersection = torch.sum(pred_regions * regions_gt, dim=1)
         
@@ -165,8 +182,8 @@ class KernelDiceLoss(nn.Module):
         pred_kernels = pred_kernels.reshape([pred_kernels.shape[0], -1])
         kernels_gt = kernels_gt.reshape([kernels_gt.shape[0], -1])
         
-        pred_kernels = pred_kernels * kernels_gt
-        kernels_gt = kernels_gt * kernels_gt
+        pred_kernels = pred_kernels
+        kernels_gt = kernels_gt
         
         intersection = torch.sum(pred_kernels * kernels_gt, dim=1)
         pred_kernels_sum = torch.sum(pred_kernels * pred_kernels, dim=1) + self.eps
@@ -201,10 +218,12 @@ class PANLoss(nn.Module):
         loss_regions = self.loss_regions(pred_regions, regions_gt, ohem_masks) # pred_regions, regions_gt, ohem_mask
         loss_kernel = self.loss_kernel(pred_kernels, kernels_gt) # pred_kernels, kernels_gt
         loss_aggregation = self.loss_aggregation(pred_similarities, regions_gt, kernels_gt, text_mask_ndi_labels, kernel_mask_ndi_labels) # pred_similarities, regions_mask, kernels_mask
-        loss_discrimination = self.loss_discrimination(pred_similarities, kernel_mask_ndi_labels) # pred_similarities, kernels_mask
-        loss_discrimination = 0
+        # loss_discrimination = self.loss_discrimination(pred_similarities, kernels_gt, kernel_mask_ndi_labels) # pred_similarities, kernels_mask
+        # loss_discrimination = 0
         
-        loss = loss_regions + self.alpha * loss_kernel + self.beta * (loss_aggregation + 0)
+        loss_discrimination = 0.0
+        
+        loss = loss_regions + self.alpha * loss_kernel + self.beta * (loss_aggregation + loss_discrimination)
         return dict(loss=loss, loss_regions=loss_regions, loss_kernel=loss_kernel, loss_aggregation=loss_aggregation, loss_discrimination=loss_discrimination)
         
     
