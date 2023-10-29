@@ -14,12 +14,16 @@ torch_version = torch.__version__
 device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 num_epochs = 60
-batch_size = 16
+batch_size = 8
 
 images_folder = "./data/train_images/"
 labels_folder = "./data/train_labels/"
-target_image_size = 320
-kernel_shrink_ratio = 0.5
+
+# images_folder = "./data/bad_sample_image/"
+# labels_folder = "./data/bad_sample_label/"
+
+target_image_size = 480
+kernel_shrink_ratio = 0.7
 np.set_printoptions(threshold=sys.maxsize)
 dataset = PANDataset(images_folder=images_folder, labels_folder=labels_folder, target_image_size=target_image_size, kernel_shrink_ratio=kernel_shrink_ratio)
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)

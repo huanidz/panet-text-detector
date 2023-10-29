@@ -53,6 +53,7 @@ class PANDataset(Dataset):
         return [(coords[i], coords[i + 1]) for i in range(0, len(coords), 2)]
     
     def make_text_mask_and_kernel_mask(self, image_path, label_path, target_size):
+        # print("image_path:", image_path)
         image = cv2.imread(image_path, flags=cv2.IMREAD_COLOR)
         H, W, _ = image.shape
         scale_h = (target_size // 4) / H
@@ -72,8 +73,8 @@ class PANDataset(Dataset):
         tree = ET.parse(label_path)
         root = tree.getroot()
         
-        
-        for box in root.findall(".//box"):
+        all_boxes = root.findall(".//box")
+        for idx, box in enumerate(all_boxes):
             segs = box.find("segs").text
             coords = self.extract_coords(segs)
 
@@ -92,8 +93,10 @@ class PANDataset(Dataset):
                 pts = np.array(pts, np.int32).reshape((-1, 1, 2))
                 kernel_pts = np.array(kernel_pts, np.int32).reshape((-1, 1, 2))
                 
-                cv2.fillPoly(text_mask, [pts], color=(1), lineType=cv2.LINE_AA)
-                cv2.fillPoly(kernel_mask, [kernel_pts], color=(1), lineType=cv2.LINE_AA)
+                # NOTE: carefully, this can overlapping each others, cause the mask value to be 0 in the next processing step. This happen when use input image size is too small. Start to happen alot at 320x320.
+                # NOTE: To prevent this happening, we will ignore the region that being overlap in the training process.
+                cv2.fillPoly(text_mask, [pts], color=(idx + 1), lineType=cv2.LINE_AA)
+                cv2.fillPoly(kernel_mask, [kernel_pts], color=(idx + 1), lineType=cv2.LINE_AA)
             except:
                 # print(f"Found mis-label polygon in the file: {image_path}. Ignoring it!")
                 continue
@@ -104,8 +107,11 @@ class PANDataset(Dataset):
         
         # self.kekw += 1
         
-        text_mask_ndi_labels, _ = ndimage.label(text_mask)
-        kernel_mask_ndi_labels, _ = ndimage.label(kernel_mask)
+        # text_mask_ndi_labels, _ = ndimage.label(text_mask)
+        # kernel_mask_ndi_labels, _ = ndimage.label(kernel_mask)
+        
+        text_mask_ndi_labels = text_mask
+        kernel_mask_ndi_labels = kernel_mask
         
         return dict(image=torch.from_numpy(image.transpose((2, 0, 1))).float(), 
                     text_mask=torch.from_numpy(text_mask[np.newaxis, :]).float(), 

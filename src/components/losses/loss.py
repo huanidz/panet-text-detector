@@ -27,122 +27,130 @@ small
 """
 
 class AggregationLoss(nn.Module):
-    def __init__(self, sigma_agg:float = 0.5):
-        super().__init__()
+    def __init__(self, sigma_agg:float = 0.5) -> None:
+        super(AggregationLoss, self).__init__()
         self.sigma_agg = sigma_agg
         
     def forward(self, pred_similarities, regions_mask, kernels_mask, text_mask_ndi_labels, kernel_mask_ndi_labels):
+        
+        batch_size = pred_similarities.shape[0]
+        similarities_channel = pred_similarities.shape[1]
+        
+        pred_similarities = pred_similarities.contiguous().reshape((batch_size, similarities_channel, -1)) # B, Similarity_C, H*W
+        regions_mask = regions_mask.contiguous().reshape((batch_size, -1)) # B, H * W 
+        kernels_mask = kernels_mask.contiguous().reshape((batch_size, -1)) # B, H * W
+        text_mask_ndi_labels = text_mask_ndi_labels.contiguous().reshape((batch_size, -1)) # B, H * W
+        kernel_mask_ndi_labels = kernel_mask_ndi_labels.contiguous().reshape((batch_size, -1)) # B, H * W
+
+        L_aggregation = []
+        
+        # i is the item at the batch_i, we loop through each item in the batch
+        # pred_sim_i: predict similarities
+        # T_mask_i: text regions mask
+        # K_mask_i: kernel regions mask
+        # T_mask_labels_i: text regions label (use ndimage)
+        # K_mask_labels_i: kernel regions label (use ndimage)
+
+        for pred_sim_i, T_mask_i, K_mask_i, T_mask_labels_i, K_mask_labels_i in zip(pred_similarities, 
+                                                                                    regions_mask,
+                                                                                    kernels_mask,
+                                                                                    text_mask_ndi_labels,
+                                                                                    kernel_mask_ndi_labels):
+            
+            num_kernels = K_mask_labels_i.max().int() # Or can use: T_mask_labels_i.max().int()            
+            num_text_instances = T_mask_labels_i.max().int()
+            
+            L_agg_single = 0.0
+            for i in range(1, num_kernels + 1):
+                where_ones_kernel = (K_mask_labels_i == i).unsqueeze(dim=0)
+                where_ones_text = (T_mask_labels_i == i).unsqueeze(dim=0)
+
+                kernel_cardinality = where_ones_kernel.sum()
+                text_cardinality = where_ones_text.sum()
                 
-        # pred_similarities: (B, S_C, SIZE, SIZE)
-        # regions_mask: (B, 1, SIZE, SIZE)
-        # kernels_mask: (B, 1, SIZE, SIZE)
-        
-        batch_size = kernels_mask.shape[0]
-        
-        kernel_labels = kernel_mask_ndi_labels
-        region_labels = text_mask_ndi_labels
-        
-        kernels_mask_cardinality = torch.zeros_like(kernels_mask) # |Ki|        
-        regions_mask_cardinality = torch.zeros_like(regions_mask) # |Ti|
-        Gk_kernel_similarities = torch.zeros_like(pred_similarities)
-        C = pred_similarities.shape[1] # Num channels of similarity vector
-        
-        
-        for batch in range(batch_size):
-            num_kernel = kernel_labels[batch].max().int()
-            for i in range(1, num_kernel + 1):
-                where_ones = (kernel_labels[batch] == i).squeeze(axis=0)
-                kernels_mask_cardinality[batch] = kernels_mask_cardinality[batch].masked_fill(where_ones, kernels_mask[batch].masked_select(where_ones).sum())                
-                for j in range(C):
-                    Gk_kernel_similarities[batch][j][where_ones] = pred_similarities[batch][j][where_ones].sum()
-        
-        for batch in range(batch_size):
-            num_regions = region_labels[batch].max().int()
-            for i in range(1, num_regions + 1):
-                where_ones = (region_labels[batch] == i).squeeze(axis=0)
-                regions_mask_cardinality[batch] = regions_mask_cardinality[batch].masked_fill(where_ones, kernels_mask[batch].masked_select(where_ones).sum())                
-        
-        Gk_kernel_similarities /= (kernels_mask_cardinality + 1) # Gk / |K| (plus one for handling 0 division)
-        
-        Fp_similarities = pred_similarities * regions_mask
-        
-        norm = torch.linalg.norm(Fp_similarities - Gk_kernel_similarities, dim=1) # Compute norm for each pixel.
-        
-        
-        norm = norm - self.sigma_agg
+                # Skipping the case where region is being overlap by other region(s)
+                if kernel_cardinality == 0 or text_cardinality == 0:
+                    continue
                 
-        D_p_K = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
-        D_p_K = torch.log(D_p_K**2 + 1) / (regions_mask_cardinality.squeeze(dim=1) + 1) # (plus one for handling 0 division)
-        L_agg = (D_p_K / num_kernel).sum(dim=(1,2)).sum()
-        return L_agg
- 
+                pred_sim_of_kernel = (pred_sim_i * where_ones_kernel) / kernel_cardinality
+                pred_sim_of_text = pred_sim_i * where_ones_text
+
+                # The Frobenius norm is the Euclidian norm of a matrix which is what the author mention that he's using Euclidian Norm to calculate distance between similarity vectors.
+                norm = torch.norm(pred_sim_of_text - pred_sim_of_kernel, p='fro') - self.sigma_agg
+                norm = torch.max(norm, 0)[0]**2
+                norm = torch.log(norm + 1) 
+                norm = norm / text_cardinality
+                L_agg_single += norm
+            
+            L_aggregation.append(L_agg_single)
+            
+        L_aggregation = torch.stack(L_aggregation).sum()
+                
+        return L_aggregation    
         
-class DiscriminationLoss(nn.Module):
-    """
-    DiscriminationLoss - L_dis: discrimination loss between text regions
     
-    Note: if there's only one text region --> L_dis = 0
-    """
-    def __init__(self, sigma_dis:float = 3):
-        super().__init__()
+   
+class DiscriminationLoss(nn.Module):
+    def __init__(self, sigma_dis:float = 3.0) -> None:
+        super(DiscriminationLoss, self).__init__()
         self.sigma_dis = sigma_dis
         
     def forward(self, pred_similarities, kernels_mask, kernel_mask_ndi_labels):
         
-        kernel_labels = kernel_mask_ndi_labels
+        batch_size = pred_similarities.shape[0]
+        similarities_channel = pred_similarities.shape[1]
+
+        pred_similarities = pred_similarities.contiguous().reshape((batch_size, similarities_channel, -1)) # B, Similarity_C, H*W
+        kernels_mask = kernels_mask.contiguous().reshape((batch_size, -1)) # B, H * W
+        kernel_mask_ndi_labels = kernel_mask_ndi_labels.contiguous().reshape((batch_size, -1)) # B, H * W
         
-        batch_size = pred_similarities.shape[0]      
+        L_discrimination = []
         
-        C = pred_similarities.shape[1] # Num channels of similarity vector
-        
-        
-        Gk_kernel_similarities = torch.zeros_like(pred_similarities) # Calculate Gk of each kernel
-        kernels_mask_cardinality = torch.zeros_like(kernels_mask) # |Ki| 
-        
-        array_of_Gk_kernel_similarities = []
-        for batch in range(batch_size):
-            num_kernel = kernel_labels[batch].max().int()
-            if num_kernel == 1:
+        # i is the item at the batch_i, we loop through each item in the batch
+        # pred_sim_i: predict similarities
+        # K_mask_i: kernel regions mask
+        # K_mask_labels_i: kernel regions label (use ndimage)
+
+        for pred_sim_i, K_mask_i, K_mask_labels_i in zip(pred_similarities, 
+                                                        kernels_mask,
+                                                        kernel_mask_ndi_labels):
+            
+            num_kernels = K_mask_labels_i.max().int()
+            
+            if num_kernels <= 1:
+                L_discrimination.append(torch.tensor(data=0.0, device=pred_similarities.device))
                 continue
-            elif num_kernel < 1:
-                # raise ValueError("Number of kernels in an image should not be 0.!")
-                continue
-            array_of_Gk_kernel_similarities_for_current_batch = []
-            for i in range(1, num_kernel + 1): # Looping through each kernel
-                where_ones = (kernel_labels[batch] == i).squeeze(axis=0)
-                Gk_kernel_similarities = torch.zeros_like(pred_similarities)
-                kernels_mask_cardinality = torch.zeros_like(kernels_mask)
-                kernels_mask_cardinality[batch] = kernels_mask_cardinality[batch].masked_fill(where_ones, kernels_mask[batch].masked_select(where_ones).sum())
-                for j in range(C):
-                    Gk_kernel_similarities[batch][j][where_ones] = pred_similarities[batch][j][where_ones].sum()
-                Gk_kernel_similarities /= (kernels_mask_cardinality + 1)    
-                array_of_Gk_kernel_similarities_for_current_batch.append(Gk_kernel_similarities)
-            array_of_Gk_kernel_similarities.append(array_of_Gk_kernel_similarities_for_current_batch)
-        L_dis = 0.0
+            
+            total_kernels_indices = torch.arange(1, num_kernels + 1)
+            
+            L_discrimination_single = 0
+            for K_i_label, K_j_label in itertools.combinations(total_kernels_indices, 2):
+                where_ones_K_i = (K_mask_labels_i == K_i_label).unsqueeze(dim=0)
+                where_ones_K_j = (K_mask_labels_i == K_j_label).unsqueeze(dim=0)
+                
+                kernel_cardinality_K_i = where_ones_K_i.sum()
+                kernel_cardinality_K_j = where_ones_K_j.sum()
+                
+                # One of two kernel being overlap (rarely happen)
+                if kernel_cardinality_K_i == 0 or kernel_cardinality_K_j == 0:
+                    continue
+                
+                pred_sim_of_K_i = (pred_sim_i * where_ones_K_i) / kernel_cardinality_K_i
+                pred_sim_of_K_j = (pred_sim_i * where_ones_K_j) / kernel_cardinality_K_j
+                
+                norm = self.sigma_dis - torch.norm(pred_sim_of_K_i - pred_sim_of_K_j, p='fro')
+                norm = torch.max(norm, 0)[0]**2
+                norm = torch.log(norm + 1)
+                L_discrimination_single += norm
+            
+            L_discrimination_single /= (num_kernels * (num_kernels - 1))
+            L_discrimination.append(L_discrimination_single)
         
-        for batch_kernel_sim in array_of_Gk_kernel_similarities:
-            for pair in (itertools.combinations(batch_kernel_sim, 2)):
-                dist = self.sigma_dis - (torch.dist(pair[0], pair[1]) + 1)
-                norm = torch.max(dist, torch.zeros_like(dist))
-                # norm = torch.linalg.norm(pair[0] - pair[1], dim=1)
-                # norm = torch.where(norm != 0.0, self.sigma_dis - norm, norm)
-                # D_ki_kj = torch.where(norm > 0.0, norm, torch.full_like(norm, 0.0))
-                D_ki_kj = torch.log(norm**2 + 1)
-                L_dis += D_ki_kj
+        L_discrimination = torch.stack(L_discrimination).sum()
+        
+        return L_discrimination
         
         
-        # L_dis *= scale.view(-1, 1, 1)
-        # print(f"==>> L_dis: {L_dis}")
-        # L_dis = L_dis.sum(dim=(1,2)).sum(dim=0)
-        
-        # try:
-        #     L_dis = L_dis.sum(dim=(1,2)).sum(dim=0)
-        # except:
-        #     print("L_dis:", L_dis)
-        return L_dis
-    
-        
-    
 class TextDiceLoss(nn.Module):
     def __init__(self, epsilon=1e-6):
         super(TextDiceLoss, self).__init__()
@@ -217,12 +225,9 @@ class PANLoss(nn.Module):
         
         loss_regions = self.loss_regions(pred_regions, regions_gt, ohem_masks) # pred_regions, regions_gt, ohem_mask
         loss_kernel = self.loss_kernel(pred_kernels, kernels_gt) # pred_kernels, kernels_gt
-        loss_aggregation = self.loss_aggregation(pred_similarities, regions_gt, kernels_gt, text_mask_ndi_labels, kernel_mask_ndi_labels) # pred_similarities, regions_mask, kernels_mask
-        # loss_discrimination = self.loss_discrimination(pred_similarities, kernels_gt, kernel_mask_ndi_labels) # pred_similarities, kernels_mask
-        # loss_discrimination = 0
-        
-        loss_discrimination = 0.0
-        
+        loss_aggregation = self.loss_aggregation(pred_similarities, regions_gt, kernels_gt, text_mask_ndi_labels, kernel_mask_ndi_labels)
+        loss_discrimination = self.loss_discrimination(pred_similarities, kernels_gt, kernel_mask_ndi_labels)
+
         loss = loss_regions + self.alpha * loss_kernel + self.beta * (loss_aggregation + loss_discrimination)
         return dict(loss=loss, loss_regions=loss_regions, loss_kernel=loss_kernel, loss_aggregation=loss_aggregation, loss_discrimination=loss_discrimination)
         
