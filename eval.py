@@ -13,8 +13,8 @@ device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 images_folder = "./data/test_images/"
 labels_folder = "./data/test_labels/"
-target_image_size = 320
-kernel_shrink_ratio = 0.5
+target_image_size = 640
+kernel_shrink_ratio = 0.7
 
 batch_size = 1
 
@@ -22,7 +22,7 @@ model = PANet(channels_scale=128, num_fpem=2, similarity_channels_scale=4).to(de
 dataset = PANDataset(images_folder=images_folder, labels_folder=labels_folder, target_image_size=target_image_size, kernel_shrink_ratio=kernel_shrink_ratio, mode='eval')
 dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
-checkpoint = torch.load("./model_checkpoint_epoch_15.pth")
+checkpoint = torch.load("./checkpoints/epoch_500.pth")
 model.load_state_dict(checkpoint['model_state_dict'])
 
 model.eval()

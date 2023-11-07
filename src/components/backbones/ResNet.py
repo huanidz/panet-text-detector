@@ -29,7 +29,21 @@ class ResBlock(nn.Module):
         x = self.conv_1(x)
         x = self.conv_2(x)
         return x + identify
-    
+
+class ResBlock50(nn.Module):
+    def __init__(self, in_channels, middle_channels, out_channels) -> None:
+        super(ResBlock50, self).__init__()
+        self.conv_1x1a = ConvBlock(in_channels, middle_channels, kersize=1, stride=1, padding=1)
+        self.conv_3x3 = ConvBlock(middle_channels, middle_channels, kersize=3, stride=1, padding=1)
+        self.conv_1x1b = ConvBlock(middle_channels, out_channels, kersize=1, stride=1, padding=1)
+        
+    def forward(self, x):
+        identity = x
+        x = self.conv_1x1a(x)
+        x = self.conv_3x3(x)
+        x = self.conv_1x1b(x)
+        return x + identity
+
 class ResNet18(nn.Module):
     def __init__(self, img_channels=3, channels_scale:int = 128):
         super().__init__()
@@ -100,3 +114,50 @@ class ResNet18(nn.Module):
         fr_32 = x
         
         return fr_4, fr_8, fr_16, fr_32
+    
+class ResNet50(nn.Module):
+    def __init__(self, img_channels:int=3) -> None:
+        super().__init__()
+        self.conv_1 = ConvBlock(in_channels=img_channels, out_channels=64, kersize=7, stride=2, padding=3)
+        self.conv_1_half = ConvBlock(in_channels=64, out_channels=64, kersize=3, stride=2, padding=1)
+        
+        # NEED BRIDGE
+        
+        # ResBlock 1
+        self.conv2_x = nn.Sequential(
+            ResBlock50(in_channels=64, middle_channels=64, out_channels=256),
+            ResBlock50(in_channels=256, middle_channels=64, out_channels=256),
+            ResBlock50(in_channels=256, middle_channels=64, out_channels=256)
+        )
+        
+        # Bridging (used to half the shape and converting the channels)
+        self.conv2_3a = ConvBlock(in_channels=64, out_channels=128, kersize=3, stride=2, padding=1)
+        self.conv2_3b = ConvBlock(in_channels=128, out_channels=128, kersize=3, stride=1, padding=1)
+        
+        # ResBlock 2
+        self.conv3_x = nn.Sequential(
+            ResBlock50(in_channels=64, middle_channels=128, out_channels=512),
+            ResBlock50(in_channels=512, middle_channels=128, out_channels=512),
+            ResBlock50(in_channels=512, middle_channels=128, out_channels=512),
+            ResBlock50(in_channels=512, middle_channels=128, out_channels=512)
+        )
+        
+        # NEED BRIDGE
+        
+        # ResBlock 3
+        self.conv4_x = nn.Sequential(
+            ResBlock50(in_channels=64, middle_channels=256, out_channels=1024),
+            ResBlock50(in_channels=1024, middle_channels=256, out_channels=1024),
+            ResBlock50(in_channels=1024, middle_channels=256, out_channels=1024),
+            ResBlock50(in_channels=1024, middle_channels=256, out_channels=1024),
+            ResBlock50(in_channels=1024, middle_channels=256, out_channels=1024),
+            ResBlock50(in_channels=1024, middle_channels=256, out_channels=1024)
+        )
+        
+        # NEED BRIDGE
+        
+        self.conv5_x = nn.Sequential(
+            ResBlock50(in_channels=64, middle_channels=512, out_channels=2048),
+            ResBlock50(in_channels=2048, middle_channels=512, out_channels=2048),
+            ResBlock50(in_channels=2048, middle_channels=512, out_channels=2048)
+        )

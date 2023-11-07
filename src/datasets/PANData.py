@@ -2,10 +2,13 @@ import torch
 import os
 import cv2
 import numpy as np
+from imgaug.augmentables.segmaps import SegmentationMapsOnImage
+from imgaug import augmenters as iaa
+import imgaug as ia
 import xml.etree.ElementTree as ET
-from scipy import ndimage
 from torch.utils.data import Dataset
 from ..utils.common import calculating_scaling_offset, offset_polygon
+from imgaug import parameters as iap
 
 class PANDataset(Dataset):
     """Some Information about PANDataset"""
@@ -53,17 +56,12 @@ class PANDataset(Dataset):
         return [(coords[i], coords[i + 1]) for i in range(0, len(coords), 2)]
     
     def make_text_mask_and_kernel_mask(self, image_path, label_path, target_size):
-        # print("image_path:", image_path)
         image = cv2.imread(image_path, flags=cv2.IMREAD_COLOR)
         H, W, _ = image.shape
         scale_h = (target_size // 4) / H
         scale_w = (target_size // 4) / W
         
-        image = cv2.resize(image, dsize=(target_size, target_size))
-        img_mean = [0.485, 0.456, 0.406]
-        img_std = [0.229, 0.224, 0.225]
-        image = image / 255.0
-        image = (image - img_mean) / img_std
+        image = cv2.resize(image, dsize=(target_size, target_size))        
         
         model_out_size = target_size // 4
         text_mask = np.zeros((model_out_size, model_out_size), dtype=np.int32)
@@ -110,8 +108,48 @@ class PANDataset(Dataset):
         # text_mask_ndi_labels, _ = ndimage.label(text_mask)
         # kernel_mask_ndi_labels, _ = ndimage.label(kernel_mask)
         
-        text_mask_ndi_labels = text_mask
-        kernel_mask_ndi_labels = kernel_mask
+        # aug_seed = np.random.randint(1, 1000)
+        
+        rotations = [0,90,180,270]
+        
+        augmenter = iaa.Sequential([
+            iaa.Affine(scale={"x": (0.95, 1.05), "y": (0.95, 1.05)}),
+            iaa.Fliplr(p=0.5),
+            iaa.Affine(rotate=iap.DeterministicList(rotations))
+        ])
+        
+        augmenter = augmenter.to_deterministic()
+        segmap_text = SegmentationMapsOnImage(text_mask, shape=text_mask.shape)
+        segmap_kernel = SegmentationMapsOnImage(kernel_mask, shape=kernel_mask.shape)
+        
+        # Transform image
+        transformed_image = augmenter.augment_image(image)
+        # Transform segmentation maps separately
+        transformed_segmap_text = augmenter.augment_segmentation_maps(segmap_text)
+        transformed_segmap_kernel = augmenter.augment_segmentation_maps(segmap_kernel)
+        
+        image = transformed_image.copy()
+        # cv2.imwrite("/home/huan/prjdir/panet-text-detection/album/image.png", image)
+        # cv2.imwrite("/home/huan/prjdir/panet-text-detection/album/transformed_text_mask.png",transformed_segmap_text.arr * 15)
+        # cv2.imwrite("/home/huan/prjdir/panet-text-detection/album/transformed_kernel_mask.png",transformed_segmap_kernel.arr * 15)
+        
+        # unique_values_text = np.unique(transformed_segmap_text.arr)
+        # print("num of segtext:", unique_values_text)
+        # unique_values_kernel = np.unique(transformed_segmap_kernel.arr)
+        # print("num of kernel:", unique_values_kernel)
+        
+        
+        # raise ValueError
+        
+        # raise ValueError("ASD")
+        
+        img_mean = [0.485, 0.456, 0.406]
+        img_std = [0.229, 0.224, 0.225]
+        image = image / 255.0
+        image = (image - img_mean) / img_std
+        
+        text_mask_ndi_labels = transformed_segmap_text.arr.squeeze().copy()
+        kernel_mask_ndi_labels = transformed_segmap_kernel.arr.squeeze().copy()
         
         return dict(image=torch.from_numpy(image.transpose((2, 0, 1))).float(), 
                     text_mask=torch.from_numpy(text_mask[np.newaxis, :]).float(), 

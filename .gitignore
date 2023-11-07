@@ -5,6 +5,8 @@ template.py
 test.py
 test2.py
 *.pth
+test*
+*.jpg
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
