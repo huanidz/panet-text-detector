@@ -3,7 +3,7 @@ import numpy as np
 import cv2
 import queue
 
-def postprocess(text_predictions, kernel_predictions, similarity_predictions, threshold:float = 0.5, minimum_area:float = 10):
+def postprocess(filename, original, text_predictions, kernel_predictions, similarity_predictions, threshold:float = 0.5, minimum_area:float = 10):
     """
     1. text_predictions: (N, 1, H, W)
     2. kernel_predictions: (N, 1, H, W)
@@ -27,7 +27,7 @@ def postprocess(text_predictions, kernel_predictions, similarity_predictions, th
         reconstuct_item = reconstruct_single(text_region=text_regions[i], kernel_region=kernel_regions[i], similarity_vector=similarity_predictions[i]
                                              ,minimum_area=minimum_area, distance_threhold=10)
         reconstuct_item = reconstuct_item[np.newaxis, :]
-        all_reconstruct.append(reconstuct_item)
+        all_reconstruct.append((filename, original, reconstuct_item))
         
     return all_reconstruct
     
@@ -98,9 +98,7 @@ def reconstruct_single(text_region, kernel_region, similarity_vector, minimum_ar
             dis = np.linalg.norm(similarity_vector[:, tmpy, tmpx] - current_kernel_sv)
             if dis >= distance_threhold:
                 continue
-            else:
-                print("good dis:", dis)
-                
+
             K_pixel_coordinates_with_label_queue.put(([tmpy, tmpx], current_label_value))
             final_prediction[tmpy, tmpx] = label_value
     
@@ -118,11 +116,11 @@ def filter_region_areas(num_regions, region_map, minimum_area):
     Filter region that has area that smaller than minimum_area
     """
     filter_region_map = np.zeros_like(region_map, dtype=np.uint8)
+    valid_labels = []
     
     if num_regions <= 1:
-        return filter_region_map
+        return filter_region_map, valid_labels
     
-    valid_labels = []
     for region_idx in range(1, num_regions + 1):
         mask = (region_map == region_idx)
         region_sum = region_map[mask].sum()

@@ -46,6 +46,17 @@ class PANDataset(Dataset):
             image = image / 255.0
             image = (image - img_mean) / img_std
             return original, torch.from_numpy(image.transpose((2, 0, 1))).float()
+        elif self.mode == 'infer':
+            filename = self.all_images_files[index]
+            image_path = os.path.join(self.images_folder, filename)
+            image = cv2.imread(image_path, cv2.IMREAD_COLOR)
+            original = cv2.imread(image_path)
+            image = cv2.resize(image, dsize=(self.target_image_size, self.target_image_size))
+            img_mean = [0.485, 0.456, 0.406]
+            img_std = [0.229, 0.224, 0.225]
+            image = image / 255.0
+            image = (image - img_mean) / img_std
+            return filename, original, torch.from_numpy(image.transpose((2, 0, 1))).float()
 
     def __len__(self):
         return len(self.all_images_files)
