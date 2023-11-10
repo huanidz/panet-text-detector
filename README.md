@@ -3,6 +3,8 @@
 ## 1. Introduction
 This is an re-implementation the paper "Efficient and Accurate Arbitrary-Shaped Text Detection with Pixel Aggregation Network" for Scene Text Detection.
 
+The repository only focus on Architecture's Components, so full process may not be your need.
+
 https://arxiv.org/abs/1908.05900
 
 ![Network Architecture](./pictures/network-architecture.png)
